@@ -1,0 +1,177 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_selection import RFE
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn import metrics
+import seaborn as sns
+import matplotlib.pyplot as plt
+import joblib
+
+
+class IDSApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Intrusion Detection System (IDS) ML App")
+
+        self.train_file = ""
+        self.test_file = ""
+        self.train_data = None
+        self.test_data = None
+        self.model = None
+        self.train_x = None
+        self.train_y = None
+        self.test_df = None
+
+        # Setup UI components
+        self.create_widgets()
+
+    def create_widgets(self):
+        """Create all the UI components"""
+        self.train_button = tk.Button(self.root, text="Select Train Data", command=self.load_train_data)
+        self.train_button.pack(pady=10)
+
+        self.test_button = tk.Button(self.root, text="Select Test Data", command=self.load_test_data)
+        self.test_button.pack(pady=10)
+
+        self.run_button = tk.Button(self.root, text="Run Preprocessing & Train Model", command=self.run_analysis)
+        self.run_button.pack(pady=10)
+
+        self.eval_button = tk.Button(self.root, text="Evaluate Model", command=self.evaluate_model)
+        self.eval_button.pack(pady=10)
+
+        self.predict_button = tk.Button(self.root, text="Make Predictions", command=self.make_predictions)
+        self.predict_button.pack(pady=10)
+
+        self.output_label = tk.Label(self.root, text="Model Output will appear here.")
+        self.output_label.pack(pady=10)
+
+    def load_train_data(self):
+        """Load training data file"""
+        self.train_file = filedialog.askopenfilename(title="Select Train CSV File", filetypes=[("CSV Files", "*.csv")])
+        if self.train_file:
+            self.train_data = pd.read_csv(self.train_file)
+            messagebox.showinfo("File Selected", f"Train Data loaded from {self.train_file}")
+            print(self.train_data.head())  # Debugging print to console
+
+    def load_test_data(self):
+        """Load test data file"""
+        self.test_file = filedialog.askopenfilename(title="Select Test CSV File", filetypes=[("CSV Files", "*.csv")])
+        if self.test_file:
+            self.test_data = pd.read_csv(self.test_file)
+            messagebox.showinfo("File Selected", f"Test Data loaded from {self.test_file}")
+            print(self.test_data.head())  # Debugging print to console
+
+    def run_analysis(self):
+        """Run preprocessing and training of the model"""
+        if not self.train_file or not self.test_file:
+            messagebox.showerror("Error", "Please load both train and test files.")
+            return
+
+        # Preprocess the data
+        self.preprocess_data()
+
+        # Train model
+        self.train_model()
+
+        # Display model performance
+        messagebox.showinfo("Model Trained", "Model has been trained successfully.")
+
+    def preprocess_data(self):
+        """Preprocess the training and testing data"""
+        # Drop unnecessary columns
+        self.train_data.drop(['num_outbound_cmds'], axis=1, inplace=True)
+        self.test_data.drop(['num_outbound_cmds'], axis=1, inplace=True)
+
+        # Standardize numeric columns
+        scaler = StandardScaler()
+        cols = self.train_data.select_dtypes(include=['float64', 'int64']).columns
+        sc_train = scaler.fit_transform(self.train_data[cols])
+        sc_test = scaler.transform(self.test_data[cols])
+
+        # Encode categorical columns
+        encoder = LabelEncoder()
+        cattrain = self.train_data.select_dtypes(include=['object']).copy()
+        cattest = self.test_data.select_dtypes(include=['object']).copy()
+        traincat = cattrain.apply(encoder.fit_transform)
+        testcat = cattest.apply(encoder.fit_transform)
+
+        # Merge processed data into final training and test sets
+        self.train_x = pd.concat([pd.DataFrame(sc_train, columns=cols), traincat.drop(['class'], axis=1)], axis=1)
+        self.train_y = self.train_data['class']
+        self.test_df = pd.concat([pd.DataFrame(sc_test, columns=cols), testcat], axis=1)
+
+    def train_model(self):
+        """Train the model using Random Forest Classifier"""
+        # Split the data into train and test sets
+        X_train, X_test, Y_train, Y_test = train_test_split(self.train_x, self.train_y, train_size=0.60, random_state=2)
+
+        # Initialize the classifier (you can switch this to any model, like RandomForest or KNN)
+        self.model = KNeighborsClassifier(n_jobs=-1)
+        self.model.fit(X_train, Y_train)
+
+        # Evaluate and display model performance
+        accuracy = metrics.accuracy_score(Y_test, self.model.predict(X_test))
+        classification_report = metrics.classification_report(Y_test, self.model.predict(X_test))
+
+        self.output_label.config(text=f"Model Accuracy: {accuracy:.4f}\n{classification_report}")
+        print(f"Model Accuracy: {accuracy:.4f}\n{classification_report}")  # Debugging print
+
+        # Save model
+        joblib.dump(self.model, 'trained_model.pkl')
+        print("Model saved as 'trained_model.pkl'")  # Debugging print
+
+    def evaluate_model(self):
+        """Evaluate the model and show results"""
+        if not self.model:
+            messagebox.showerror("Error", "Model has not been trained yet.")
+            return
+
+        # Evaluate using cross-validation
+        scores = cross_val_score(self.model, self.train_x, self.train_y, cv=10)
+        accuracy = np.round(scores.mean(), 4)
+
+        # Confusion Matrix
+        confusion_matrix = metrics.confusion_matrix(self.train_y, self.model.predict(self.train_x))
+        classification_report = metrics.classification_report(self.train_y, self.model.predict(self.train_x))
+
+        # Display confusion matrix
+        fig, ax = plt.subplots(figsize=(6, 6))
+        sns.heatmap(confusion_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=['Normal', 'Anomaly'], yticklabels=['Normal', 'Anomaly'])
+        ax.set_xlabel('Predicted')
+        ax.set_ylabel('True')
+        ax.set_title('Confusion Matrix')
+        plt.show()
+
+        # Display performance metrics
+        messagebox.showinfo("Model Evaluation", f"Accuracy: {accuracy}\nConfusion Matrix:\n{confusion_matrix}\nClassification Report:\n{classification_report}")
+        print(f"Cross-validation Mean Score: {accuracy}")
+        print(f"Confusion Matrix:\n{confusion_matrix}")
+        print(f"Classification Report:\n{classification_report}")
+
+    def make_predictions(self):
+        """Make predictions using the trained model"""
+        if not self.model:
+            messagebox.showerror("Error", "Model has not been trained yet.")
+            return
+
+        # Predict using the model
+        predictions = self.model.predict(self.test_df)
+
+        # Add predictions to the test data
+        self.test_data['prediction'] = predictions
+
+        # Display the predictions
+        self.test_data.to_csv('predictions.csv', index=False)
+        messagebox.showinfo("Predictions Made", "Predictions have been saved to 'predictions.csv'.")
+        print(self.test_data.head())  # Debugging print to console
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = IDSApp(root)
+    root.mainloop()
